@@ -9,7 +9,7 @@ struct Output {
 }
 
 fn main() {
-    let args = std::env::args().collect::<Vec<_>>();
+    let args = std::env::args().collect::<Vec<String>>();
 
     if args.len() != 2 {
         println!("\x1b[33m{}\x1b[0m", BANNER);
@@ -62,7 +62,7 @@ fn main() {
     }
 
     println!(
-        "\u{26A1}\x1b[33m Zapped processes on port {}! \x1b[0m",
-        port
+        "\x1b[33mZapped processes on port {} \x1b[0m\u{26A1}",
+        port.split(":").last().unwrap()
     );
 }
