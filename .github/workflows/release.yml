@@ -7,9 +7,8 @@ on:
 
 jobs:
   release:
-    name: release ${{ matrix.target }} (with non-required env)
+    name: Build and Release ${{ matrix.target }}
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
     strategy:
       fail-fast: false
       matrix:
@@ -20,30 +19,50 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v2
-      - name: Compile and release
-        uses: rust-build/rust-build.action@v1.4.5
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Build project
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare binaries
+        run: |
+          mkdir -p release
+          cp target/${{ matrix.target }}/release/zap ./release/
+          if [ "${{ matrix.archive }}" = "tar.gz" ]; then
+            tar -czvf release/zap-${{ matrix.target }}.tar.gz -C release zap
+          else
+            zip -j release/zap-${{ matrix.target }}.zip release/zap
+          fi
+
+      - name: Upload Release Asset
+        uses: actions/upload-artifact@v2
+        with:
+          name: zap-${{ matrix.target }}
+          path: release/*
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          RUSTTARGET: ${{ matrix.target }}
-          EXTRA_FILES: "README.md"
-          SRC_DIR: "src"
-          ARCHIVE_TYPES: ${{ matrix.archive }}
-          MINIFY: "yes"
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
 
-  release_without_not_required:
-    name: release ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      matrix:
-        target: [x86_64-unknown-linux-musl]
-    steps:
-      - uses: actions/checkout@v2
-      - name: Compile and release
-        uses: rust-build/rust-build.action@v1.4.5
+      - name: Upload Binaries to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          RUSTTARGET: ${{ matrix.target }}
-          UPLOAD_MODE: none
-      - name: Checkout output
-        run: ls -laR
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: release/*
+          asset_name: zap-${{ matrix.target }}.${{ matrix.archive }}
+          asset_content_type: application/octet-stream
