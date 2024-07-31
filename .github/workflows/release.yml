@@ -1,8 +1,9 @@
 on:
+  push:
+    branches:
+      - master
   release:
     types: [created]
-  push:
-
 
 jobs:
   release:
@@ -18,9 +19,9 @@ jobs:
           - target: x86_64-apple-darwin
             archive: zip
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v2
       - name: Compile and release
-        uses: rust-build/rust-build.action@master
+        uses: rust-build/rust-build.action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -29,6 +30,7 @@ jobs:
           SRC_DIR: "src"
           ARCHIVE_TYPES: ${{ matrix.archive }}
           MINIFY: "yes"
+
   release_without_not_required:
     name: release ${{ matrix.target }}
     runs-on: ubuntu-latest
@@ -37,9 +39,9 @@ jobs:
       matrix:
         target: [x86_64-unknown-linux-musl]
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v2
       - name: Compile and release
-        uses: rust-build/rust-build.action@master
+        uses: rust-build/rust-build.action@v1
         with:
           RUSTTARGET: ${{ matrix.target }}
           UPLOAD_MODE: none
