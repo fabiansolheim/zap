@@ -15,15 +15,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            deb: true
-          - os: ubuntu-latest
             target: arm-unknown-linux-musleabihf
           - os: ubuntu-latest
             target: armv7-unknown-linux-musleabihf
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            deb: true
           - os: ubuntu-latest
             target: aarch64-linux-android
           - os: macos-latest
@@ -64,17 +58,6 @@ jobs:
           command: build
           args: --release --locked --target=${{ matrix.target }} --color=always --verbose
           use-cross: ${{ runner.os == 'Linux' }}
-      - name: Install cargo-deb
-        if: ${{ matrix.deb == true }}
-        uses: actions-rs/install@v0.1
-        with:
-          crate: cargo-deb
-      - name: Build deb
-        if: ${{ matrix.deb == true }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: deb
-          args: --no-build --no-strip --output=. --target=${{ matrix.target }}
       - name: Package (*nix)
         if: runner.os != 'Windows'
         run: |
