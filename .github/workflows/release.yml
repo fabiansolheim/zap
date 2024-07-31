@@ -78,9 +78,9 @@ jobs:
       - name: Package (*nix)
         if: runner.os != 'Windows'
         run: |
+          cp README.md target/${{ matrix.target }}/release/ &&
           tar -cvf zap-${{ steps.get_version.outputs.value }}-${{ matrix.target }}.tar.gz \
-            -C target/${{ matrix.target }}/release/ zap \
-            README.md
+            -C target/${{ matrix.target }}/release/ zap README.md
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
