@@ -81,4 +81,4 @@ jobs:
             *.tar.gz
             *.zip
           name: ${{ steps.get_version.outputs.value }}
-          tag_name: "Latest"
+          tag_name: ""
