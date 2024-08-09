@@ -78,7 +78,12 @@ fn get_processes_for_port(port: &str, flags: &[Flag]) -> Vec<String> {
     return deduped_pids;
 }
 
-fn kill_processes(pids: &[String]) {
+fn kill_processes(pids: &[String], port: &str) {
+    if pids.is_empty() {
+        println!("\x1b[33mNo processes found on port {}\x1b[0m", port);
+        return;
+    }
+
     for pid in pids {
         let kill_output = Command::new("kill")
             .arg("-9")
@@ -118,12 +123,7 @@ fn main() {
         .collect();
 
     let pids = get_processes_for_port(&port, &flags);
-    if pids.is_empty() {
-        println!("\x1b[33mNo processes found on port {}\x1b[0m", port);
-        return;
-    }
-
-    kill_processes(&pids);
+    kill_processes(&pids, &port);
 
     println!(
         "\x1b[33mZapped processes on port {} \x1b[0m\u{26A1}",
