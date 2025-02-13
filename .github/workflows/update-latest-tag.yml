@@ -1,0 +1,30 @@
+name: Update Latest Tag
+
+on:
+  push:
+    tags:
+      - "v*" # Triggers when a new version tag is pushed, e.g., v0.1.3
+
+jobs:
+  update-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Ensures all tags are available
+
+      - name: Get latest tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Delete existing "latest" tag locally (if exists)
+        run: git tag -d latest || true
+
+      - name: Delete existing "latest" tag remotely (if exists)
+        run: git push origin --delete latest || true
+
+      - name: Create and push new "latest" tag
+        run: |
+          git tag latest ${{ env.VERSION }}
+          git push origin latest
