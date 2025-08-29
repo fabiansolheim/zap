@@ -1,4 +1,4 @@
-use core::fmt;
+use std::io::{self, Write};
 use std::process::Command;
 use std::str;
 
@@ -9,52 +9,32 @@ struct Output {
     stdout: String,
 }
 
-#[derive(Debug, PartialEq)]
-enum Flag {
-    Node,
-    Google,
+#[derive(Debug, Clone)]
+pub struct ProcessInfo {
+    pid: String,
+    owner: String,
+    command: String,
 }
 
-impl fmt::Display for Flag {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl Flag {
-    fn from_str(flag: &str) -> Option<Self> {
-        match flag {
-            "-n" | "--node" => Some(Flag::Node),
-            "-g" | "--google" => Some(Flag::Google),
-            _ => None,
-        }
-    }
-}
-fn parse_line(line: &str, flags: &[Flag]) -> Option<String> {
+fn parse_lsof_line(line: &str) -> Option<ProcessInfo> {
     let parts: Vec<&str> = line.split_whitespace().collect();
 
-    if parts.len() < 2 {
+    if parts.len() < 3 {
         return None;
     }
 
-    let process_name = parts[0];
-    let process_pid = parts[1];
+    let command = parts[0];
+    let pid = parts[1];
+    let owner = parts[2];
 
-    let is_node_process = flags.contains(&Flag::Node) && process_name == "node";
-    let is_google_process = flags.contains(&Flag::Google) && process_name == "Google";
-
-    if is_node_process || is_google_process {
-        return process_pid.parse::<u32>().ok().map(|pid| pid.to_string());
-    }
-
-    if !flags.contains(&Flag::Node) && !flags.contains(&Flag::Google) {
-        return process_pid.parse::<u32>().ok().map(|pid| pid.to_string());
-    }
-
-    None
+    pid.parse::<u32>().ok().map(|_| ProcessInfo {
+        pid: pid.to_string(),
+        owner: owner.to_string(),
+        command: command.to_string(),
+    })
 }
 
-fn get_processes_for_port(port: &str, flags: &[Flag]) -> Vec<String> {
+fn get_processes_for_port(port: &str) -> Vec<ProcessInfo> {
     let output = Command::new("lsof")
         .arg("-i")
         .arg(&port)
@@ -65,37 +45,147 @@ fn get_processes_for_port(port: &str, flags: &[Flag]) -> Vec<String> {
         stdout: String::from_utf8(output.stdout).unwrap(),
     };
 
-    let pids: Vec<String> = data
+    let processes: Vec<ProcessInfo> = data
         .stdout
         .lines()
         .skip(1)
-        .filter_map(|line| parse_line(line, flags))
+        .filter_map(|line| parse_lsof_line(line))
         .collect();
 
-    let mut deduped_pids: Vec<String> = pids.clone();
-    deduped_pids.dedup();
+    let mut deduped_processes = Vec::new();
+    let mut seen_pids = std::collections::HashSet::new();
 
-    return deduped_pids;
-}
-
-fn kill_processes(pids: &[String], port: &str) {
-    if pids.is_empty() {
-        println!("\x1b[33mNo processes found on port {}\x1b[0m", port);
-        return;
+    for process in processes {
+        if seen_pids.insert(process.pid.clone()) {
+            deduped_processes.push(process);
+        }
     }
 
-    for pid in pids {
-        let kill_output = Command::new("kill")
-            .arg("-9")
-            .arg(pid)
-            .output()
-            .expect("failed to execute kill command");
+    return deduped_processes;
+}
 
-        if !kill_output.stdout.is_empty() {
+fn get_current_user() -> String {
+    Command::new("whoami")
+        .output()
+        .map(|output| {
+            String::from_utf8(output.stdout)
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn prompt_user_confirmation(processes_needing_sudo: &[ProcessInfo]) -> bool {
+    println!("\x1b[31m⚠️  WARNING: The following processes require sudo to kill:\x1b[0m");
+    for process in processes_needing_sudo {
+        println!(
+            "  PID {} ({}): {} - owned by {}",
+            process.pid, process.command, process.pid, process.owner
+        );
+    }
+    println!();
+    println!("\x1b[33m⚠️  Are you sure you wanna sudo? (y/N)\x1b[0m");
+    io::stdout().flush().unwrap();
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+
+    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+pub struct Zap<'a> {
+    pub processes: Vec<ProcessInfo>,
+    pub port: &'a str,
+}
+
+impl<'a> Zap<'a> {
+    pub fn new(port: &'a str) -> Self {
+        let processes = get_processes_for_port(port);
+        Self { processes, port }
+    }
+
+    fn kill_processes(self: Self) {
+        let processes = self.processes;
+        if processes.is_empty() {
+            println!(
+                "\x1b[33mNo processes found on port {} \x1b[0m",
+                self.port.split(":").last().unwrap()
+            );
+            println!(
+                "\x1b[33mNote: Run with 'sudo zap {}' to see processes from all users\x1b[0m",
+                self.port.split(":").last().unwrap()
+            );
             return;
         }
-        if !kill_output.stderr.is_empty() {
-            return println!("stderr: {}", str::from_utf8(&kill_output.stderr).unwrap());
+
+        let current_user = get_current_user();
+        let mut owned_processes = Vec::new();
+        let mut foreign_processes = Vec::new();
+
+        for process in processes {
+            if process.owner == current_user {
+                owned_processes.push(process);
+            } else {
+                foreign_processes.push(process);
+            }
+        }
+
+        let mut killed_count = 0;
+
+        for process in &owned_processes {
+            let kill_output = Command::new("kill")
+                .arg("-9")
+                .arg(&process.pid)
+                .output()
+                .expect("failed to execute kill command");
+
+            if kill_output.stderr.is_empty() {
+                killed_count += 1;
+            } else {
+                eprintln!(
+                    "Failed to kill PID {}: {}",
+                    process.pid,
+                    str::from_utf8(&kill_output.stderr).unwrap().trim()
+                );
+            }
+        }
+
+        // Handle foreign processes if any exist
+        if !foreign_processes.is_empty() {
+            if prompt_user_confirmation(&foreign_processes) {
+                for process in &foreign_processes {
+                    let kill_output = Command::new("sudo")
+                        .arg("kill")
+                        .arg("-9")
+                        .arg(&process.pid)
+                        .output()
+                        .expect("failed to execute sudo kill command");
+
+                    if kill_output.stderr.is_empty() {
+                        killed_count += 1;
+                    } else {
+                        eprintln!(
+                            "Failed to sudo kill PID {}: {}",
+                            process.pid,
+                            str::from_utf8(&kill_output.stderr).unwrap().trim()
+                        );
+                    }
+                }
+            } else {
+                println!(
+                    "\x1b[33mSkipped {} processes requiring sudo\x1b[0m",
+                    foreign_processes.len()
+                );
+            }
+        }
+
+        if killed_count > 0 {
+            println!(
+                "\x1b[33mZapped {} process(es) on port {} \x1b[0m\u{26A1}",
+                killed_count,
+                self.port.split(":").last().unwrap()
+            );
         }
     }
 }
@@ -116,17 +206,6 @@ fn main() {
         format!(":{}", args[1])
     };
 
-    let flags: Vec<Flag> = args
-        .iter()
-        .skip(2)
-        .filter_map(|arg| Flag::from_str(arg))
-        .collect();
-
-    let pids = get_processes_for_port(&port, &flags);
-    kill_processes(&pids, &port);
-
-    println!(
-        "\x1b[33mZapped processes on port {} \x1b[0m\u{26A1}",
-        port.split(":").last().unwrap()
-    );
+    let zap = Zap::new(&port);
+    zap.kill_processes();
 }
